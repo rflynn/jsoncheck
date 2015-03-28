@@ -23,9 +23,10 @@ def check(obj, spec, ctx=None):
     if ctx is None:
         ctx = []
     # print 'check obj=%s spec=%s ctx=%s' % (obj, spec, ctx)
-    if isinstance(spec, Nullable):
-        if not spec.check(obj):
-            return "%s%s does not match %s" % (''.join(ctx), obj, sig(spec))
+    if isinstance(spec, (Nullable, Optional)):
+        err = spec.check(obj)
+        if err:
+            return err
     elif isinstance(spec, Enum):
         err = spec.check(obj)
         if err:
@@ -39,6 +40,9 @@ def check(obj, spec, ctx=None):
     else:
         return 'expected type %s, got %s' % (sig(spec), obj)
 
+def xstr(x):
+    if x is None: return 'None'
+    return str(x)
 
 def check_dict(obj, spec, ctx):
     if spec is dict:
@@ -51,11 +55,14 @@ def check_dict(obj, spec, ctx):
             for k in spec.keys():
                 # if k not in obj:
                 #     return 'key missing: %s%s' % (''.join(ctx), k)
+                if isinstance(spec[k], Optional):
+                    if k not in obj:
+                        continue # no problemo!
                 v = obj.get(k)
                 if is_scalar(v):
-                    e = check_scalar(v, spec[k], ctx=ctx+[k+':'])
+                    e = check_scalar(v, spec[k], ctx=ctx+[xstr(k)+':'])
                 else:
-                    e = check(v, spec[k], ctx=ctx+[k+':'])
+                    e = check(v, spec[k], ctx=ctx+[xstr(k)+':'])
                 if e:
                     return e
     else:
@@ -65,6 +72,10 @@ def check_list(obj, spec, ctx):
     # print 'check_list obj=%s spec=%s ctx=%s' % (obj, spec, ctx)
     if spec is list:
         return None
+    elif isinstance(spec, Optional):
+        err = spec.check(obj)
+        if err:
+            return err
     elif isinstance(spec, list):
         if spec:
             for i, x in enumerate(obj):
@@ -95,9 +106,10 @@ def check_scalar(x, spec, ctx=None):
             return "%s:%s is not a list" % (''.join(ctx), repr(x))
         else:
             return check(x, spec, ctx=ctx)
-    elif isinstance(spec, Nullable):
-        if not spec.check(x):
-            return "%s%s does not match %s" % (''.join(ctx), x, sig(spec))
+    elif isinstance(spec, (Nullable, Optional)):
+        err = spec.check(x)
+        if err:
+            return err
     elif isinstance(spec, Enum):
         err = spec.check(x)
         if err:
@@ -122,15 +134,20 @@ def sig(x):
     if x is unicode: return 'str'
     if isinstance(x, basestring): return 'str'
     if x is dict: return '{}'
-    if isinstance(x, dict): return '{}'
+    if isinstance(x, dict): return sigdict(x)
     if x is list: return '[]'
     if isinstance(x, list):
         if x: return '[' + sig(x[0]) + ']'
         return '[]'
     if isinstance(x, float): return 'float'
     if isinstance(x, Nullable): return repr(x)
+    if isinstance(x, Optional): return repr(x)
     if isinstance(x, Enum): return repr(x)
     return str(type(x))
+
+def sigdict(x):
+    return '{' + ', '.join(repr(k) + ': ' + sig(v)
+                for k, v in x.iteritems()) + '}'
 
 def is_composite(x):
     return isinstance(x, (list, dict))
@@ -144,7 +161,8 @@ class Nullable:
         self.t = t
 
     def check(self, obj):
-        return obj is None or not check(obj, self.t)
+        if obj is None: return None
+        return check(obj, self.t)
 
     def __repr__(self):
         return 'Nullable(%s)' % sig(self.t)
@@ -152,8 +170,21 @@ class Nullable:
 def nullable(t):
     return Nullable(t)
 
+
+class Optional:
+
+    def __init__(self, t):
+        self.t = t
+
+    def check(self, obj):
+        if obj is None: return None
+        return check(obj, self.t)
+
+    def __repr__(self):
+        return 'Optional(%s)' % sig(self.t)
+
 def optional(t):
-    return Nullable(t)
+    return Optional(t)
 
 class Enum:
 
@@ -365,7 +396,7 @@ def test_optional_list():
     assert check([[]], optional([[]])) is None
     assert check([[]], optional([[int]])) is None
     assert check([[0]], optional([[int]])) is None
-    assert check([[0.0]], optional([[int]])) == '[[0.0]] does not match Nullable([[int]])'
+    assert check([[0.0]], optional([[int]])) == '[0][0]0.0 is not an int'
 
 def test_enum():
     assert check(0, enum([0])) is None
@@ -376,12 +407,25 @@ def test_enum():
 
     assert check(0, enum([])) == '0 not in Enum([])' # impossible
     assert check('d', enum(['a', 'b', 'c'])) == "d not in Enum(['a', 'b', 'c'])"
-    assert check('d', optional(enum(['a']))) == "d does not match Nullable(Enum(['a']))"
+    assert check('d', optional(enum(['a']))) == "d not in Enum(['a'])"
 
 def test_str_not_empty():
     assert check('asdf', str_not_empty) is None
     assert check('', str_not_empty) == " does not match 'str_not_empty'"
     assert check(1234, str_not_empty) == "1234 does not match 'str_not_empty'"
+
+def test_optional_sig():
+    assert check({'k':1,'l':0.0}, {'k':int,'l':optional(int)}) == '0.0 is not an int'
+
+def test_nullable_sig_deep():
+    assert check([{'k':1.5}], nullable([{'k':int}])) == '[0]k:1.5 is not an int'
+
+def test_optional_deep():
+    assert check(None, optional([{'k':optional(int)}])) is None
+    assert check([[{'l':1}]], optional([[{'k':optional(int),'l':optional(int)}]])) is None
+
+def test_dict_none_key_fail():
+    assert check({None:0.0}, {None:optional(int)}) == '0.0 is not an int'
 
 if __name__ == '__main__':
     pass

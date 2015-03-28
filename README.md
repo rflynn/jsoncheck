@@ -5,13 +5,17 @@ it returns human-readable error messages when supplied data doesn't match the sc
 it comes with built-in types, or you can define your own functions to check for arbitrary values
 
 # Install
+```
 $ sudo pip install jsoncheck
+```
 
 ...or...
 
+```
 $ git clone https://github.com/rflynn/jsoncheck.git
 $ cd jsoncheck
 $ sudo python setup.py install
+```
 
 # Examples
 jsoncheck.check returns None on success, or a human-readable string on error
